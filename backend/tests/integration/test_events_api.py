@@ -1,11 +1,7 @@
 import pytest
-from fastapi.testclient import TestClient
 from datetime import datetime, timedelta, timezone
-from app.main import app
 
-client = TestClient(app)
-
-def test_create_event():
+def test_create_event(client):
     """Test creating a new event"""
     event_data = {
         "title": "Team Meeting",
@@ -23,7 +19,7 @@ def test_create_event():
     assert "id" in event
     assert "createdAt" in event
 
-def test_get_event():
+def test_get_event(client):
     """Test retrieving an event by ID"""
     # First create an event
     event_data = {
@@ -45,7 +41,7 @@ def test_get_event():
     assert retrieved_event["id"] == created_event["id"]
     assert retrieved_event["title"] == "Focus Time"
 
-def test_list_events():
+def test_list_events(client):
     """Test listing events for a user"""
     response = client.get("/events")
     assert response.status_code == 200
@@ -53,7 +49,7 @@ def test_list_events():
     events = response.json()
     assert isinstance(events, list)
 
-def test_update_event():
+def test_update_event(client):
     """Test updating an existing event"""
     # Create event first
     event_data = {
@@ -81,7 +77,7 @@ def test_update_event():
     assert updated_event["title"] == "Updated Title"
     assert updated_event["type"] == "MEETING"
 
-def test_delete_event():
+def test_delete_event(client):
     """Test deleting an event"""
     # Create event first
     event_data = {
@@ -102,7 +98,7 @@ def test_delete_event():
     get_response = client.get(f"/events/{created_event['id']}")
     assert get_response.status_code == 404
 
-def test_create_event_validation_error():
+def test_create_event_validation_error(client):
     """Test creating event with invalid data"""
     invalid_data = {
         "title": "",  # Empty title should fail
@@ -113,7 +109,7 @@ def test_create_event_validation_error():
     response = client.post("/events", json=invalid_data)
     assert response.status_code == 422  # Validation error
 
-def test_get_nonexistent_event():
+def test_get_nonexistent_event(client):
     """Test getting an event that doesn't exist"""
     response = client.get("/events/nonexistent-id")
     assert response.status_code == 404

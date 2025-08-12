@@ -75,7 +75,12 @@ def score_slot(task, start, end, existing_events: Optional[List] = None):
     
     # 1. Due date urgency factor
     if task.due_at:
-        hours_left = (task.due_at - start).total_seconds() / 3600
+        due_at = task.due_at
+        if due_at.tzinfo is None:
+            due_at = due_at.replace(tzinfo=timezone.utc)
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        hours_left = (due_at - start).total_seconds() / 3600
         if hours_left > 0:
             # More urgent as due date approaches, capped at 72h
             urgency_factor = max(0, 1 - min(hours_left / 72, 1))

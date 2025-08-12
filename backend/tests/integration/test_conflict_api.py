@@ -1,11 +1,7 @@
 import pytest
-from fastapi.testclient import TestClient
 from datetime import datetime, timedelta, timezone
-from app.main import app
 
-client = TestClient(app)
-
-def test_event_creation_with_focus_protection():
+def test_event_creation_with_focus_protection(client):
     """Test that creating events during FOCUS time is protected"""
     # First create a FOCUS event
     base_time = datetime.now(timezone.utc)
@@ -39,7 +35,7 @@ def test_event_creation_with_focus_protection():
     # For now, it might succeed but we'll implement protection later
     assert meeting_response.status_code in [201, 409]  # Either created or conflict detected
 
-def test_event_suggestion_avoids_conflicts():
+def test_event_suggestion_avoids_conflicts(client):
     """Test that slot suggestions avoid existing events"""
     # Create an existing event
     base_time = datetime.now(timezone.utc)
@@ -83,7 +79,7 @@ def test_event_suggestion_avoids_conflicts():
         assert not (slot_start < existing_end and slot_end > existing_start), \
             f"Slot {slot_start}-{slot_end} conflicts with existing event {existing_start}-{existing_end}"
 
-def test_multiple_events_no_conflicts():
+def test_multiple_events_no_conflicts(client):
     """Test creating multiple non-conflicting events"""
     base_time = datetime.now(timezone.utc)
     
@@ -122,7 +118,7 @@ def test_multiple_events_no_conflicts():
     assert event1["title"] == "Event 1"
     assert event2["title"] == "Event 2"
 
-def test_improved_slot_recommendations():
+def test_improved_slot_recommendations(client):
     """Test that slot recommendations consider priority and energy tags"""
     # Create a high-priority task
     high_priority_task = {

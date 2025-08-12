@@ -1,11 +1,7 @@
 import pytest
-from fastapi.testclient import TestClient
 from datetime import datetime, timedelta, timezone
-from app.main import app
 
-client = TestClient(app)
-
-def test_focus_protection_blocks_conflicts():
+def test_focus_protection_blocks_conflicts(client):
     """Test that FOCUS events protect against conflicting meetings"""
     # Create a FOCUS event
     base_time = datetime.now(timezone.utc)
@@ -44,7 +40,7 @@ def test_focus_protection_blocks_conflicts():
     assert error_data["detail"]["code"] == "FOCUS_PROTECTED"
     assert "FOCUS time is protected" in error_data["detail"]["message"]
 
-def test_focus_protection_allows_override():
+def test_focus_protection_allows_override(client):
     """Test that FOCUS conflicts can be overridden when explicitly allowed"""
     # Create a FOCUS event
     base_time = datetime.now(timezone.utc)
@@ -81,7 +77,7 @@ def test_focus_protection_allows_override():
     created_meeting = override_response.json()
     assert created_meeting["title"] == "Urgent Client Call"
 
-def test_no_conflict_with_non_focus_events():
+def test_no_conflict_with_non_focus_events(client):
     """Test that regular events don't trigger focus protection"""
     # Create a regular meeting
     base_time = datetime.now(timezone.utc)
@@ -114,7 +110,7 @@ def test_no_conflict_with_non_focus_events():
     # Should be allowed (we only protect FOCUS events for now)
     assert response2.status_code == 201
 
-def test_focus_protection_exact_boundaries():
+def test_focus_protection_exact_boundaries(client):
     """Test focus protection at exact time boundaries"""
     base_time = datetime.now(timezone.utc)
     focus_start = base_time + timedelta(hours=5)

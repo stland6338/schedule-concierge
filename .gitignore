@@ -105,6 +105,7 @@ celerybeat.pid
 .venv
 env/
 venv/
+frontend/node_modules/
 ENV/
 env.bak/
 venv.bak/
@@ -144,3 +145,4 @@ cython_debug/
 
 # DB
 backend/local.db
+frontend/.next/

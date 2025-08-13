@@ -7,6 +7,7 @@ from ..db.session import get_db
 from ..db import models
 from ..services.event_service import EventService, EventNotFound
 from ..services.conflict_service import ConflictService, ConflictDetected
+from ..errors import ValidationAppError, ConflictError, NotFoundError
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -53,6 +54,10 @@ def create_event(body: EventCreate, db: Session = Depends(get_db)):
         db.add(calendar)
         db.commit()
     
+    # Basic temporal validation
+    if body.end_at <= body.start_at:
+        raise ValidationAppError("EVENT_INVALID_TIME", "end before start")
+
     # Create temporary event for conflict detection
     temp_event = models.Event(
         user_id=user_id,
@@ -73,10 +78,7 @@ def create_event(body: EventCreate, db: Session = Depends(get_db)):
             allow_focus_override=body.override_focus_protection
         )
     except ConflictDetected as e:
-        raise HTTPException(
-            status_code=409, 
-            detail={"code": "FOCUS_PROTECTED", "message": str(e)}
-        )
+        raise ConflictError("FOCUS_PROTECTED", str(e))
     
     event_service = EventService()
     event = event_service.create_event(
@@ -106,7 +108,7 @@ def get_event(event_id: str, db: Session = Depends(get_db)):
     try:
         event = event_service.get_event(db, event_id)
     except EventNotFound:
-        raise HTTPException(status_code=404, detail={"code": "EVENT_NOT_FOUND", "message": "Event not found"})
+        raise NotFoundError("EVENT_NOT_FOUND", "Event not found")
     
     return EventOut(
         id=event.id,
@@ -150,7 +152,7 @@ def update_event(event_id: str, body: EventUpdate, db: Session = Depends(get_db)
             description=body.description
         )
     except EventNotFound:
-        raise HTTPException(status_code=404, detail={"code": "EVENT_NOT_FOUND", "message": "Event not found"})
+        raise NotFoundError("EVENT_NOT_FOUND", "Event not found")
     
     return EventOut(
         id=event.id,

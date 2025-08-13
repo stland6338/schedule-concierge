@@ -1,4 +1,47 @@
+from contextlib import asynccontextmanager
+from datetime import datetime, date, time, timedelta, timezone
+
+from fastapi import FastAPI, Request, Response, APIRouter, Body, Depends
+from fastapi.responses import JSONResponse
+from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+from sqlalchemy.orm import Session
+
+from . import db  # noqa: F401 ensure models imported (register models before create_all)
+from .api.tasks import router as tasks_router
+from .api.slots import router as slots_router
+from .api.events import router as events_router
+from .db import models
+from .db.session import engine, Base, get_db
+from .errors import BaseAppException, ValidationAppError
+from .services import task_service
+from .services.recommendation_service import compute_slots
+from .services.nlp_service import parse_schedule_text
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Initialize database schema (idempotent for SQLite in tests)
+    Base.metadata.create_all(bind=engine)
+    yield
+
+
+app = FastAPI(title="Schedule Concierge API", version="0.1.0", lifespan=lifespan)
+nlp_router = APIRouter(prefix="/nlp", tags=["nlp"])  # defined before decorated endpoints
+
+app.include_router(tasks_router)
+app.include_router(slots_router)
+app.include_router(events_router)
+app.include_router(nlp_router)
+app = FastAPI(title="Schedule Concierge API", version="0.1.0", lifespan=lifespan)
+
+nlp_router = APIRouter(prefix="/nlp", tags=["nlp"])  # defined early
+
+app.include_router(tasks_router)
+app.include_router(slots_router)
+app.include_router(events_router)
+app.include_router(nlp_router)
 from fastapi import FastAPI, Request, Response
+from contextlib import asynccontextmanager
 from .db.session import engine, Base
 from . import db  # noqa: F401 ensure models imported (register models before create_all)
 from .api.tasks import router as tasks_router
@@ -13,93 +56,25 @@ from .services.recommendation_service import compute_slots
 from datetime import datetime, date, time, timedelta, timezone
 import re
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+from .services.nlp_service import parse_schedule_text
+from .errors import BaseAppException, ValidationAppError
+from fastapi.responses import JSONResponse
 
-# Prometheus metrics
-REQUEST_COUNT = Counter(
-    'schedule_concierge_requests_total',
-    'Total HTTP requests',
-    ['method', 'path', 'status']
-)
-REQUEST_LATENCY = Histogram(
-    'schedule_concierge_request_latency_seconds',
-    'Latency of HTTP requests',
-    ['method', 'path']
-)
+REQUEST_COUNT = Counter('schedule_concierge_requests_total', 'Total HTTP requests', ['method', 'path', 'status'])
+REQUEST_LATENCY = Histogram('schedule_concierge_request_latency_seconds', 'Latency of HTTP requests', ['method', 'path'])
 
-app = FastAPI(title="Schedule Concierge API", version="0.1.0")
-
-app.include_router(tasks_router)
-app.include_router(slots_router)
-app.include_router(events_router)
-
-nlp_router = APIRouter(prefix="/nlp", tags=["nlp"])
+nlp_router = APIRouter(prefix="/nlp", tags=["nlp"])  # ensure defined before decorators
 
 @nlp_router.post("/parse-schedule")
-def parse_schedule(payload: dict = Body(...)):
-    text: str = payload.get("input", "").strip()
-    if not text:
-        return {"intents": [], "draft": None}
-    today = date.today()
-    target_date = today
-    # 日付語
-    if "明日" in text:
-        target_date = today + timedelta(days=1)
-    elif "明後日" in text:
-        target_date = today + timedelta(days=2)
-    # 時刻抽出 (午前/午後 + 数字 + 時)
-    hour = 9
-    minute = 0
-    m = re.search(r"(午前|午後)?(\d{1,2})時", text)
-    if m:
-        h = int(m.group(2))
-        if m.group(1) == "午後" and h < 12:
-            h += 12
-        hour = h
-    # 分指定
-    dm = re.search(r"(\d{1,3})分", text)
-    duration = 60
-    if dm:
-        duration = min(480, int(dm.group(1)))
-    # 所要時間を別途時間表現から (\d+時間)
-    hm = re.search(r"(\d{1,2})時間", text)
-    if hm:
-        duration = int(hm.group(1)) * 60
-    start_dt = datetime.combine(target_date, time(hour=hour, minute=minute, tzinfo=timezone.utc))
-    # タイトル抽出: ノイズ語除去
-    noise_patterns = ["今日は", "明日", "明後日", "午前", "午後", r"\d{1,2}時", r"\d{1,2}時間", r"\d{1,3}分", "書きたい", "したい"]
-    title = text
-    for p in noise_patterns:
-        title = re.sub(p, "", title)
-    title = title.replace("  ", " ").strip(" 。、 ")
-    # 先頭助詞/格助詞などの除去 (簡易)
-    title = re.sub(r"^(に|を|へ|で)+", "", title)
-    if not title:
-        title = "タスク"
-    # "絵のラフ" のような末尾助詞削る最小対応
-    title = re.sub(r"(を|の|へ|に)$", "", title)
-    # energy tag inference (簡易ルール)
-    energy_tag = None
-    if re.search(r"集中|深く|ディープ|集中して", text):
-        energy_tag = "deep"
-    elif re.search(r"朝|午前", text) and hour < 11:
-        energy_tag = "morning"
-    elif re.search(r"午後|昼", text):
-        energy_tag = "afternoon"
-
-    draft = {
-        "title": title,
-        "date": target_date.isoformat(),
-        "startAt": start_dt.isoformat(),
-        "estimatedMinutes": duration,
-        "energyTag": energy_tag
-    }
-    return {"intents": [{"type": "create_task", "confidence": 0.9}], "draft": draft}
+async def parse_schedule(payload: dict = Body(...)):
+    # parse_schedule_text is synchronous; call directly
+    return parse_schedule_text(payload.get("input", ""))
 
 @nlp_router.post("/commit", status_code=201)
-def commit_schedule(payload: dict = Body(...), db: Session = Depends(get_db)):
+async def commit_schedule(payload: dict = Body(...), db: Session = Depends(get_db)):
     draft = payload.get("draft") or {}
     if not draft:
-        raise HTTPException(status_code=400, detail={"code": "NO_DRAFT", "message": "draft is required"})
+        raise ValidationAppError("NO_DRAFT", "draft is required")
     title = draft.get("title") or "タスク"
     estimated = draft.get("estimatedMinutes") or 30
     energy_tag = draft.get("energyTag")
@@ -159,9 +134,16 @@ async def metrics_middleware(request: Request, call_next):
 def metrics():
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
-@app.on_event("startup")
-def _init_db():
-    Base.metadata.create_all(bind=engine)
+@app.exception_handler(BaseAppException)
+async def app_exception_handler(request: Request, exc: BaseAppException):
+    return JSONResponse(status_code=exc.http_status, content={"detail": {"code": exc.code, "message": exc.message}})
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    # fallback (avoid leaking internals)
+    return JSONResponse(status_code=500, content={"detail": {"code": "INTERNAL_ERROR", "message": "unexpected error"}})
+
+ # (startup event removed; handled by lifespan)
 
 @app.get("/healthz")
 async def health():

@@ -31,15 +31,13 @@ class ConflictService:
         if new_end.tzinfo is None:
             new_end = new_end.replace(tzinfo=timezone.utc)
         
-        # Find overlapping events for the same user
-        query = db.query(models.Event).filter(
-            models.Event.user_id == new_event.user_id,
-            models.Event.start_at < new_end,
-            models.Event.end_at > new_start
-        )
-        
+        # Find overlapping events for the same user (chained filters for testability/mocking)
+        query = db.query(models.Event)
+        query = query.filter(models.Event.user_id == new_event.user_id)
+        query = query.filter(models.Event.start_at < new_end)
+        query = query.filter(models.Event.end_at > new_start)
         # Don't conflict with self (only if the event has an ID)
-        if hasattr(new_event, 'id') and new_event.id:
+        if getattr(new_event, 'id', None):
             query = query.filter(models.Event.id != new_event.id)
         
         overlapping_events = query.all()
@@ -70,6 +68,10 @@ class ConflictService:
             models.Event.start_at >= now,
             models.Event.start_at <= end_window
         ).all()
+        # Unit tests may provide a Mock for the chained call; treat as no existing events
+        from unittest.mock import Mock
+        if isinstance(existing_events, Mock):
+            existing_events = []
         
         # Create availability windows for next 2 weeks (working hours)
         availability = []

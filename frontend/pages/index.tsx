@@ -7,12 +7,13 @@ import React, { useState } from 'react'
 import { TaskManager } from '../components/TaskManager'
 import { SlotRecommendation } from '../components/SlotRecommendation'
 import { EventManager } from '../components/EventManager'
+import { GoogleCalendarIntegration } from '../components/GoogleCalendarIntegration'
 import { Task, SlotSuggestion } from '../types/api'
 
 export default function Home() {
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
   const [selectedSlot, setSelectedSlot] = useState<SlotSuggestion | null>(null)
-  const [activeTab, setActiveTab] = useState<'tasks' | 'slots' | 'events'>('tasks')
+  const [activeTab, setActiveTab] = useState<'tasks' | 'slots' | 'events' | 'integrations'>('tasks')
 
   const handleSlotSelect = (slot: SlotSuggestion) => {
     setSelectedSlot(slot)
@@ -57,6 +58,12 @@ export default function Home() {
         >
           イベント作成
         </button>
+        <button 
+          style={tabStyle('integrations')}
+          onClick={() => setActiveTab('integrations')}
+        >
+          外部連携
+        </button>
       </nav>
 
       {/* Main Content */}
@@ -95,6 +102,10 @@ export default function Home() {
             selectedSlot={selectedSlot || undefined}
             suggestedTitle={selectedTask?.title}
           />
+        )}
+
+        {activeTab === 'integrations' && (
+          <GoogleCalendarIntegration />
         )}
       </main>
 

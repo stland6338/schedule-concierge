@@ -40,6 +40,15 @@ def _ensure_tables():
     with _init_lock:
         if not _tables_created:
             Base.metadata.create_all(bind=engine)
+            # lightweight column addition (development only)
+            try:
+                with engine.connect() as conn:
+                    res = conn.exec_driver_sql("PRAGMA table_info(users)").fetchall()
+                    cols = {r[1] for r in res}
+                    if 'hashed_password' not in cols:
+                        conn.exec_driver_sql("ALTER TABLE users ADD COLUMN hashed_password VARCHAR")
+            except Exception:
+                pass
             _tables_created = True
 
 # Dependency

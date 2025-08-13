@@ -13,6 +13,7 @@ class User(Base):
     __tablename__ = "users"
     id = Column(String, primary_key=True, default=gen_uuid)
     email = Column(String, unique=True, nullable=False)
+    hashed_password = Column(String, nullable=True)
     timezone = Column(String, nullable=False, default="UTC")
     locale = Column(String, nullable=False, default="en-US")
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))

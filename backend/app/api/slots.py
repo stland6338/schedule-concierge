@@ -5,18 +5,19 @@ from ..db.session import get_db
 from ..db import models
 from ..services.task_service import get_task, TaskNotFound
 from ..services.recommendation_service import compute_slots
+from .auth import get_current_user_optional
 
 router = APIRouter(prefix="/slots")
 
 @router.get("/suggest")
-def suggest_slots(taskId: str = Query(...), limit: int = Query(5, ge=1, le=20), db: Session = Depends(get_db)):
+def suggest_slots(taskId: str = Query(...), limit: int = Query(5, ge=1, le=20), db: Session = Depends(get_db), current_user: models.User | None = Depends(get_current_user_optional)):
     try:
         task = get_task(db, taskId)
     except TaskNotFound:
         raise HTTPException(status_code=404, detail={"code": "TASK_NOT_FOUND", "message": "task not found"})
     
     # Get user's existing events for conflict detection
-    user_id = "demo-user"  # temp user stub
+    user_id = current_user.id if current_user else "demo-user"
     now = datetime.now(timezone.utc)
     end_window = now + timedelta(days=7)  # Look ahead 7 days
     

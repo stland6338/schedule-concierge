@@ -10,6 +10,7 @@ from . import db  # noqa: F401 ensure models imported (register models before cr
 from .api.tasks import router as tasks_router
 from .api.slots import router as slots_router
 from .api.events import router as events_router
+from .api.auth import router as auth_router, get_current_user_optional
 from .db import models
 from .db.session import engine, Base, get_db
 from .errors import BaseAppException, ValidationAppError
@@ -22,21 +23,26 @@ from .services.nlp_service import parse_schedule_text
 async def lifespan(app: FastAPI):
     # Initialize database schema (idempotent for SQLite in tests)
     Base.metadata.create_all(bind=engine)
+    # Lightweight migration: add hashed_password column if absent (SQLite dev only)
+    try:
+        with engine.connect() as conn:
+            res = conn.exec_driver_sql("PRAGMA table_info(users)").fetchall()
+            cols = {r[1] for r in res}
+            if 'hashed_password' not in cols:
+                conn.exec_driver_sql("ALTER TABLE users ADD COLUMN hashed_password VARCHAR")
+    except Exception:
+        pass  # ignore if fails; tests will recreate fresh DB
     yield
 
 
 app = FastAPI(title="Schedule Concierge API", version="0.1.0", lifespan=lifespan)
 nlp_router = APIRouter(prefix="/nlp", tags=["nlp"])  # defined before decorated endpoints
 
+app.include_router(auth_router)
 app.include_router(tasks_router)
 app.include_router(slots_router)
 app.include_router(events_router)
 app.include_router(nlp_router)
-app = FastAPI(title="Schedule Concierge API", version="0.1.0", lifespan=lifespan)
-
-nlp_router = APIRouter(prefix="/nlp", tags=["nlp"])  # defined early
-
-app.include_router(tasks_router)
 app.include_router(slots_router)
 app.include_router(events_router)
 app.include_router(nlp_router)
@@ -71,7 +77,7 @@ async def parse_schedule(payload: dict = Body(...)):
     return parse_schedule_text(payload.get("input", ""))
 
 @nlp_router.post("/commit", status_code=201)
-async def commit_schedule(payload: dict = Body(...), db: Session = Depends(get_db)):
+async def commit_schedule(payload: dict = Body(...), db: Session = Depends(get_db), current_user: models.User | None = Depends(get_current_user_optional)):
     draft = payload.get("draft") or {}
     if not draft:
         raise ValidationAppError("NO_DRAFT", "draft is required")
@@ -87,13 +93,16 @@ async def commit_schedule(payload: dict = Body(...), db: Session = Depends(get_d
             due_at = datetime.combine(d, time(23, 59)).replace(tzinfo=timezone.utc)
         except Exception:
             due_at = None
-    user_id = "demo-user"
-    # ensure user exists
-    if not db.query(models.User).filter(models.User.id == user_id).first():
-        u = models.User(id=user_id, email="demo@example.com", timezone="UTC", locale="en-US")
-        db.add(u)
-        db.commit()
-    task = task_service.create_task(db, user_id=user_id, title=title, due_at=due_at, priority=3, estimated_minutes=estimated, energy_tag=energy_tag)
+    if current_user is None:
+        user_id = "demo-user"
+        if not db.query(models.User).filter(models.User.id == user_id).first():
+            u = models.User(id=user_id, email="demo@example.com", timezone="UTC", locale="en-US")
+            db.add(u)
+            db.commit()
+        user = db.query(models.User).filter(models.User.id == user_id).first()
+    else:
+        user = current_user
+    task = task_service.create_task(db, user_id=user.id, title=title, due_at=due_at, priority=3, estimated_minutes=estimated, energy_tag=energy_tag)
     # Build availability next 5 days working hours
     now = datetime.now(timezone.utc)
     availability = []
@@ -101,7 +110,7 @@ async def commit_schedule(payload: dict = Body(...), db: Session = Depends(get_d
         day_start = now.replace(hour=9, minute=0, second=0, microsecond=0) + timedelta(days=day)
         if day_start.weekday() < 5:  # week days
             availability.append({"start": day_start, "end": day_start.replace(hour=17)})
-    existing_events = db.query(models.Event).filter(models.Event.user_id == user_id).all()
+    existing_events = db.query(models.Event).filter(models.Event.user_id == user.id).all()
     slots = compute_slots(task, availability, limit=5, existing_events=existing_events)
     task_out = {
         "id": task.id,

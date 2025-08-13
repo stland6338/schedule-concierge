@@ -7,6 +7,7 @@ from ..db.session import get_db
 from ..db import models
 from ..services.event_service import EventService, EventNotFound
 from ..services.conflict_service import ConflictService, ConflictDetected
+from .auth import get_current_user_optional
 from ..errors import ValidationAppError, ConflictError, NotFoundError
 
 router = APIRouter(prefix="/events", tags=["events"])
@@ -38,14 +39,17 @@ class EventUpdate(BaseModel):
     description: Optional[str] = None
 
 @router.post("", response_model=EventOut, status_code=201)
-def create_event(body: EventCreate, db: Session = Depends(get_db)):
-    # temp user stub (same as tasks)
-    user_id = "demo-user"
-    # ensure user exists
-    if not db.query(models.User).filter(models.User.id == user_id).first():
-        u = models.User(id=user_id, email="demo@example.com", timezone="UTC", locale="en-US")
-        db.add(u)
-        db.commit()
+def create_event(body: EventCreate, db: Session = Depends(get_db), current_user: models.User | None = Depends(get_current_user_optional)):
+    if current_user is None:
+        user_id = "demo-user"
+        if not db.query(models.User).filter(models.User.id == user_id).first():
+            u = models.User(id=user_id, email="demo@example.com", timezone="UTC", locale="en-US")
+            db.add(u)
+            db.commit()
+        user = db.query(models.User).filter(models.User.id == user_id).first()
+    else:
+        user = current_user
+    user_id = user.id
     
     # ensure calendar exists
     calendar = db.query(models.Calendar).filter(models.Calendar.user_id == user_id).first()
@@ -121,10 +125,8 @@ def get_event(event_id: str, db: Session = Depends(get_db)):
     )
 
 @router.get("", response_model=List[EventOut])
-def list_events(db: Session = Depends(get_db)):
-    # temp user stub
-    user_id = "demo-user"
-    
+def list_events(db: Session = Depends(get_db), current_user: models.User | None = Depends(get_current_user_optional)):
+    user_id = current_user.id if current_user else "demo-user"
     events = db.query(models.Event).filter(models.Event.user_id == user_id).all()
     return [
         EventOut(

@@ -1,0 +1,8 @@
+; Canonicalize author identities shown on GitHub contributors graph
+; Format: Proper Name <proper@email> Commit Name <commit@email>
+
+; Map accidental AI author names to the maintainer
+stland6338 <stland6338@gmail.com> Claude
+stland6338 <stland6338@gmail.com> claude
+stland6338 <stland6338@gmail.com> Claude <claude@users.noreply.github.com>
+stland6338 <stland6338@gmail.com> claude <claude@users.noreply.github.com>

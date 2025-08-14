@@ -258,6 +258,33 @@ flowchart LR
 | オフライン編集 | iOSで30分圏内変更同期 |
 | Webhook配信 | 95%< 60秒以内配信 |
 | 監査ログ | 主要操作 (作成/更新/削除) 記録 |
+
+---
+## 11. OAuth State 管理 (実装詳細)
+### 概要
+PKCE フローで生成する state / code_verifier を短時間 (TTL) だけ保持し、CSRF 防止と検証に利用。Memory 実装から Redis 実装へ容易に切替できる抽象層を導入。
+
+### 実装
+Interface: StateStore (put / pop / prune / size)。
+
+1. MemoryStateStore
+  - dict + timestamp。
+  - put/pop 前後に prune() 呼び出し。
+  - prune(): TTL 超過削除 + 容量超過 (max_entries) 最古順削除。
+
+2. RedisStateStore
+  - Key: sc:oauth:state:<state> (value=code_verifier, EX=ttl)
+  - Sorted Set: sc:oauth:states (score=created_at) で容量制御。
+  - prune(): ZCARD > max_entries の超過分 (score 昇順) 削除 / 既に TTL で消えた key の孤立エントリ除去。
+
+### 運用考慮
+- Memory は単一プロセスのみ整合。マルチワーカー時は Redis 推奨。
+- TTL/容量は環境変数で将来調整予定 (OAUTH_STATE_TTL, OAUTH_STATE_MAX)。
+- メトリクス: 需要あれば queue depth (state_store_size_gauge) を追加予定。
+
+### セキュリティ
+- state は高価値シークレットではないが推測困難なランダム値 (18 bytes base64url)。
+- code_verifier は交換後 pop() で即時破棄し 1 回限り利用。
 | セキュリティ | 基本OWASP Top10 対策済 |
 
 ---

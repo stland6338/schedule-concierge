@@ -1,7 +1,37 @@
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
+import time
+from prometheus_client import Counter, Histogram
+try:  # optional tracing
+    from opentelemetry import trace
+    _rec_tracer = trace.get_tracer(__name__)
+except Exception:  # pragma: no cover
+    _rec_tracer = None
 
 SLOT_GRANULARITY_MIN = 15
+
+# Metrics (module-level so they register once)
+SLOT_COMPUTE_COUNT = Counter(
+    "schedule_concierge_slot_compute_requests_total",
+    "Total slot compute requests"
+)
+SLOT_COMPUTE_DURATION = Histogram(
+    "schedule_concierge_slot_compute_duration_seconds",
+    "Time spent computing slot recommendations"
+)
+SLOT_SCORE_DURATION = Histogram(
+    "schedule_concierge_slot_score_duration_seconds",
+    "Time spent scoring individual candidate slots"
+)
+SLOT_COMPUTE_EMPTY = Counter(
+    "schedule_concierge_slot_compute_empty_total",
+    "Number of slot computations returning zero candidates"
+)
+SLOT_COMPUTE_RETURNED = Histogram(
+    "schedule_concierge_slot_compute_slots_returned",
+    "Number of slots returned after scoring/dedup",
+    buckets=(0,1,2,3,4,5,8,10,20)
+)
 
 class SlotSuggestion(dict):
     pass
@@ -19,44 +49,60 @@ def compute_slots(task, availability_windows: List[Dict], limit: int = 5, existi
         limit: Maximum number of slots to return
         existing_events: List of existing Event objects to avoid conflicts
     """
+    start_time = time.monotonic()
+    SLOT_COMPUTE_COUNT.inc()
+
     if existing_events is None:
         existing_events = []
-    
+
     required = task.estimated_minutes or 30
-    slots = []
-    
-    for w in availability_windows:
-        cur = w['start']
-        while cur + timedelta(minutes=required) <= w['end']:
-            end = cur + timedelta(minutes=required)
-            
-            # Check if this slot conflicts with existing events
-            conflicts = _check_slot_conflicts(cur, end, existing_events)
-            if not conflicts:
-                score = score_slot(task, cur, end, existing_events)
-                slots.append({
-                    "startAt": cur.isoformat(), 
-                    "endAt": end.isoformat(), 
-                    "score": round(score, 4)
-                })
-                
-            if len(slots) >= limit * 3:  # gather some extra for sorting
-                break
-            cur += timedelta(minutes=SLOT_GRANULARITY_MIN)
-    
+    slots: List[Dict] = []
+
+    span_ctx = _rec_tracer.start_as_current_span("recommendation.compute_slots") if _rec_tracer else None
+    try:
+        for w in availability_windows:
+            cur = w['start']
+            while cur + timedelta(minutes=required) <= w['end']:
+                end = cur + timedelta(minutes=required)
+                conflicts = _check_slot_conflicts(cur, end, existing_events)
+                if not conflicts:
+                    score = score_slot(task, cur, end, existing_events)
+                    slots.append({
+                        "startAt": cur.isoformat(),
+                        "endAt": end.isoformat(),
+                        "score": round(score, 4)
+                    })
+                if len(slots) >= limit * 3:
+                    break
+                cur += timedelta(minutes=SLOT_GRANULARITY_MIN)
+    finally:
+        if span_ctx:
+            span_ctx.__exit__(None, None, None)
+
     if not slots:
+        SLOT_COMPUTE_EMPTY.inc()
+        SLOT_COMPUTE_DURATION.observe(time.monotonic() - start_time)
+        SLOT_COMPUTE_RETURNED.observe(0)
         return []
-    
+
     # Sort by score descending
     slots.sort(key=lambda x: x['score'], reverse=True)
-    
+
     # Deduplicate adjacent slots
-    dedup = []
+    dedup: List[Dict] = []
     for s in slots:
         if not any(abs(parse_iso(s['startAt']) - parse_iso(d['startAt'])).total_seconds() < SLOT_GRANULARITY_MIN*60 for d in dedup):
             dedup.append(s)
         if len(dedup) >= limit:
             break
+
+    SLOT_COMPUTE_RETURNED.observe(len(dedup))
+    SLOT_COMPUTE_DURATION.observe(time.monotonic() - start_time)
+    if _rec_tracer:
+        span = trace.get_current_span()
+        span.set_attribute("slots.returned", len(dedup))
+        span.set_attribute("availability.count", len(availability_windows))
+        span.set_attribute("task.id", getattr(task, 'id', 'unknown'))
     return dedup
 
 def score_slot(task, start, end, existing_events: Optional[List] = None):
@@ -68,10 +114,14 @@ def score_slot(task, start, end, existing_events: Optional[List] = None):
     - Working hours preference
     - Focus time protection
     """
-    if existing_events is None:
-        existing_events = []
-        
-    base_score = 1.0
+    with SLOT_SCORE_DURATION.time():
+        if existing_events is None:
+            existing_events = []
+        base_score = 1.0
+        if _rec_tracer:
+            span = trace.get_current_span()
+            span.set_attribute("slot.start", start.isoformat())
+            span.set_attribute("slot.end", end.isoformat())
     
     # 1. Due date urgency factor
     if task.due_at:
@@ -101,7 +151,7 @@ def score_slot(task, start, end, existing_events: Optional[List] = None):
     # 5. Focus time protection penalty
     focus_penalty = _calculate_focus_penalty(start, end, existing_events)
     base_score *= focus_penalty  # Multiplicative penalty
-    
+
     return max(base_score, 0.01)  # Minimum score
 
 def _check_slot_conflicts(start, end, existing_events):

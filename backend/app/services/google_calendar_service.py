@@ -8,6 +8,7 @@ import uuid
 
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from google.oauth2.credentials import Credentials  # for patching in tests
 from sqlalchemy.orm import Session
 
 from ..db import models
@@ -300,6 +301,18 @@ class GoogleCalendarService:
         if existing:
             # Update existing calendar
             existing.name = google_calendar.get('summary', 'Untitled Calendar')
+            existing.time_zone = google_calendar.get('timeZone') or existing.time_zone
+            existing.access_role = google_calendar.get('accessRole') or existing.access_role
+            existing.color = google_calendar.get('backgroundColor') or existing.color
+            existing.is_primary = 1 if google_calendar.get('primary') else 0
+            # First primary becomes default if none set
+            if existing.is_primary and not existing.is_default:
+                any_default = db.query(models.Calendar).filter(
+                    models.Calendar.user_id == user_id,
+                    models.Calendar.is_default == 1
+                ).first()
+                if not any_default:
+                    existing.is_default = 1
             return existing
         else:
             # Create new calendar
@@ -308,7 +321,13 @@ class GoogleCalendarService:
                 user_id=user_id,
                 name=google_calendar.get('summary', 'Untitled Calendar'),
                 external_provider="google",
-                external_id=google_calendar['id']
+                external_id=google_calendar['id'],
+                time_zone=google_calendar.get('timeZone'),
+                access_role=google_calendar.get('accessRole'),
+                color=google_calendar.get('backgroundColor'),
+                is_primary=1 if google_calendar.get('primary') else 0,
+                is_default=1 if google_calendar.get('primary') else 0,
+                selected=1,
             )
             db.add(calendar)
             return calendar

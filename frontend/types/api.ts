@@ -56,3 +56,16 @@ export interface CreateEventRequest {
   description?: string
   overrideFocusProtection?: boolean
 }
+
+export interface Calendar {
+  id: string
+  name?: string
+  externalProvider?: string
+  externalId?: string
+  timeZone?: string
+  accessRole?: string
+  color?: string
+  isPrimary: boolean
+  isDefault: boolean
+  selected: boolean
+}

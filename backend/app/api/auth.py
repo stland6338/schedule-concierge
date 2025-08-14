@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Header
+from fastapi import APIRouter, Depends, HTTPException, status, Header, Body
 from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from ..db.session import get_db
@@ -21,6 +21,20 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid credentials")
     token = create_access_token(user.id)
     return {"access_token": token, "token_type": "bearer"}
+
+
+@router.post("/register")
+async def register(payload: dict = Body(...), db: Session = Depends(get_db)):
+    email = payload.get("email")
+    password = payload.get("password") or "changeme"
+    if not email:
+        raise HTTPException(status_code=400, detail={"code": "EMAIL_REQUIRED", "message": "email required"})
+    auth = AuthService(db)
+    existing = auth.authenticate_user(email, password)
+    if existing:
+        return {"user": {"id": existing.id, "email": existing.email}}
+    user = auth.register_if_absent(email, password)
+    return {"user": {"id": user.id, "email": user.email}}
 
 
 def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_scheme)) -> models.User:

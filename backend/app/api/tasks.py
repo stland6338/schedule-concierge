@@ -6,6 +6,7 @@ from ..db.session import get_db
 from ..services import task_service
 
 from ..db import models  # ensure models imported for metadata registration
+from ..services.demo_user import get_or_create_demo_user
 from .auth import get_current_user_optional
 
 router = APIRouter(prefix="/tasks")
@@ -29,15 +30,7 @@ class TaskOut(BaseModel):
 @router.post("", response_model=TaskOut, status_code=201, response_model_by_alias=True)
 def create_task(body: TaskCreate, db: Session = Depends(get_db), current_user: models.User | None = Depends(get_current_user_optional)):
     # current_user provided if authenticated; otherwise emulate legacy demo-user
-    if current_user is None:
-        user_id = "demo-user"
-        if not db.query(models.User).filter(models.User.id==user_id).first():
-            u = models.User(id=user_id, email="demo@example.com", timezone="UTC", locale="en-US")
-            db.add(u)
-            db.commit()
-        user = db.query(models.User).filter(models.User.id==user_id).first()
-    else:
-        user = current_user
+    user = current_user or get_or_create_demo_user(db)
     task = task_service.create_task(db, user_id=user.id, title=body.title, due_at=body.dueAt, priority=body.priority, estimated_minutes=body.estimatedMinutes, energy_tag=body.energyTag)
     return {
         "id": task.id,

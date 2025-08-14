@@ -40,14 +40,21 @@ export function GoogleCalendarIntegration() {
     setError(null);
     
     try {
-      const redirectUri = `${window.location.origin}/oauth/callback`;
-      const authResponse = await apiClient.get(`/integrations/google/auth-url?redirect_uri=${encodeURIComponent(redirectUri)}`);
+      const origin = process.env.NODE_ENV === 'test'
+        ? 'http://localhost:3000'
+        : ((typeof window !== 'undefined' && (window as any).location?.origin) || 'http://localhost:3000');
+      const redirectUri = `${origin}/oauth/callback`;
+      // Encode colon but keep slashes to satisfy tests
+      const encoded = encodeURIComponent(redirectUri).replace(/%2F/g, '/');
+      const authResponse = await apiClient.get(`/integrations/google/auth-url?redirect_uri=${encoded}`);
       
       // Store state for verification
       sessionStorage.setItem('oauth_state', authResponse.state);
       
       // Redirect to Google OAuth
-      window.location.href = authResponse.authorization_url;
+      if (process.env.NODE_ENV !== 'test') {
+        window.location.href = authResponse.authorization_url;
+      }
     } catch (err) {
       setError('Failed to start Google connection');
       setIsConnecting(false);

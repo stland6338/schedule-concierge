@@ -8,7 +8,9 @@ from ..db import models
 from ..services.event_service import EventService, EventNotFound
 from ..services.conflict_service import ConflictService, ConflictDetected
 from .auth import get_current_user_optional
+from ..services.demo_user import get_or_create_demo_user
 from ..errors import ValidationAppError, ConflictError, NotFoundError
+from ..domain.enums import EventType
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -16,7 +18,7 @@ class EventCreate(BaseModel):
     title: str = Field(..., min_length=1)
     start_at: datetime = Field(..., alias="startAt")
     end_at: datetime = Field(..., alias="endAt")
-    type: str = Field(default="GENERAL")
+    type: EventType = Field(default=EventType.GENERAL)
     description: Optional[str] = None
     override_focus_protection: bool = Field(default=False, alias="overrideFocusProtection")
 
@@ -35,26 +37,18 @@ class EventUpdate(BaseModel):
     title: Optional[str] = None
     start_at: Optional[datetime] = Field(None, alias="startAt")
     end_at: Optional[datetime] = Field(None, alias="endAt")
-    type: Optional[str] = None
+    type: Optional[EventType] = None
     description: Optional[str] = None
 
 @router.post("", response_model=EventOut, status_code=201)
 def create_event(body: EventCreate, db: Session = Depends(get_db), current_user: models.User | None = Depends(get_current_user_optional)):
-    if current_user is None:
-        user_id = "demo-user"
-        if not db.query(models.User).filter(models.User.id == user_id).first():
-            u = models.User(id=user_id, email="demo@example.com", timezone="UTC", locale="en-US")
-            db.add(u)
-            db.commit()
-        user = db.query(models.User).filter(models.User.id == user_id).first()
-    else:
-        user = current_user
+    user = current_user or get_or_create_demo_user(db)
     user_id = user.id
     
     # ensure calendar exists
     calendar = db.query(models.Calendar).filter(models.Calendar.user_id == user_id).first()
     if not calendar:
-        calendar = models.Calendar(user_id=user_id, name="Default Calendar")
+        calendar = models.Calendar(user_id=user_id, name="Default Calendar", is_default=1, selected=1)
         db.add(calendar)
         db.commit()
     
@@ -126,8 +120,14 @@ def get_event(event_id: str, db: Session = Depends(get_db)):
 
 @router.get("", response_model=List[EventOut])
 def list_events(db: Session = Depends(get_db), current_user: models.User | None = Depends(get_current_user_optional)):
-    user_id = current_user.id if current_user else "demo-user"
-    events = db.query(models.Event).filter(models.Event.user_id == user_id).all()
+    user = current_user or get_or_create_demo_user(db)
+    user_id = user.id
+    events = (
+        db.query(models.Event)
+        .join(models.Calendar, models.Calendar.id == models.Event.calendar_id)
+        .filter(models.Event.user_id == user_id, models.Calendar.selected == 1)
+        .all()
+    )
     return [
         EventOut(
             id=event.id,

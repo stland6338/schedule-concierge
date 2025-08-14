@@ -40,6 +40,23 @@ Schedule Concierge REST API の完全なリファレンスドキュメントで�
 | `EVENT_NOT_FOUND` | 404 | イベントが見つからない |
 | `VALIDATION_ERROR` | 422 | リクエストデータの形式エラー |
 | `FOCUS_PROTECTED` | 409 | フォーカス時間保護によるブロック |
+| `OAUTH_CONFIG_MISSING` | 400 | OAuth 設定不足 (環境変数未設定) |
+| `OAUTH_STATE_INVALID` | 400 | OAuth state 不正または期限切れ |
+| `OAUTH_CODE_INVALID` | 400 | 認可コード交換失敗 |
+| `TOKEN_DECRYPT_FAILED` | 400 | 暗号化トークン復号失敗 |
+| `TOKEN_EXPIRED` | 401 | アクセストークン期限切れ (refresh不可) |
+| `TOKEN_REFRESH_FAILED` | 400 | トークンリフレッシュ失敗 |
+| `INTEGRATION_REVOKED` | 403 | 連携が取り消され利用不可 |
+| `INVALID_PROVIDER` | 400 | サポート外または一致しない provider |
+| `INTERNAL_ERROR` | 500 | 予期しないサーバ内部エラー |
+| `NO_DRAFT` | 422 | NLP commit で draft 欠如 |
+| `CONFLICT_DETECTED` | 409 | スケジュール衝突検出 |
+| `AUTH_REQUIRED` | 401 | 認証が必要 |
+| `PERMISSION_DENIED` | 403 | 権限不足 |
+| `RATE_LIMITED` | 429 | レート制限超過 |
+| `PAYLOAD_TOO_LARGE` | 413 | ペイロードサイズ超過 |
+| `UNSUPPORTED_MEDIA_TYPE` | 415 | Content-Type 不正 |
+| `NOT_IMPLEMENTED` | 501 | 未実装機能 |
 
 ---
 

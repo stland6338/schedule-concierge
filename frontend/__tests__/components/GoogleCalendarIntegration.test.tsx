@@ -13,7 +13,7 @@ jest.mock('../../services/api-client', () => ({
 }));
 const mockApiClient = apiClient as jest.Mocked<typeof apiClient>;
 
-// Mock window.location
+// Mock window.location (jsdom will log a navigation warning, but tests remain green)
 delete (window as any).location;
 (window as any).location = {
   origin: 'http://localhost:3000',

@@ -43,9 +43,28 @@ export const EventManager: React.FC<EventManagerProps> = ({
     }
   }, [selectedSlot, suggestedTitle])
 
-  const formatDateTime = (localDateTime: string): string => {
-    // Add :00Z to make it proper UTC format
-    return `${localDateTime}:00Z`
+  // If NEXT_PUBLIC_PRESERVE_LOCAL_AS_UTC !== 'false', keep legacy behavior (treat input as already UTC)
+  const PRESERVE_LOCAL_AS_UTC = (process.env.NEXT_PUBLIC_PRESERVE_LOCAL_AS_UTC ?? 'true') !== 'false'
+
+  /**
+   * Convert a datetime-local input value (local wall time) to proper UTC ISO.
+   * Legacy mode (default) preserves naive meaning (simply appends Z) to avoid breaking existing stored data/tests.
+   * Set NEXT_PUBLIC_PRESERVE_LOCAL_AS_UTC=false to enable true timezone conversion.
+   */
+  const toUtcIso = (localDateTime: string): string => {
+    if (!localDateTime) return ''
+    if (PRESERVE_LOCAL_AS_UTC) {
+      // Backwards-compatible: assume input already represents UTC time
+      return `${localDateTime}:00Z`
+    }
+    // Proper conversion: interpret input as local time, then convert to UTC ISO
+    // localDateTime: 'YYYY-MM-DDTHH:MM'
+    const [datePart, timePart] = localDateTime.split('T')
+    const [year, month, day] = datePart.split('-').map(Number)
+    const [hour, minute] = timePart.split(':').map(Number)
+    const dt = new Date(year, month - 1, day, hour, minute, 0, 0) // local time
+    // toISOString() returns with milliseconds; strip them for consistency with backend expectations
+    return dt.toISOString().replace(/\.\d{3}Z$/, 'Z')
   }
 
   const validateForm = (): string[] => {
@@ -87,8 +106,8 @@ export const EventManager: React.FC<EventManagerProps> = ({
 
     const request: CreateEventRequest = {
       title: title.trim(),
-      startAt: formatDateTime(startAt),
-      endAt: formatDateTime(endAt),
+  startAt: toUtcIso(startAt),
+  endAt: toUtcIso(endAt),
       type,
       ...(description && { description })
     }
@@ -124,7 +143,7 @@ export const EventManager: React.FC<EventManagerProps> = ({
     }
 
     try {
-      const newEvent = await apiClient.createEvent(requestWithOverride)
+  const newEvent = await apiClient.createEvent(requestWithOverride)
       setSuccess('イベントが作成されました')
       setFocusConflict(false)
       setPendingEventData(null)

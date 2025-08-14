@@ -8,6 +8,7 @@ import { TaskManager } from '../components/TaskManager'
 import { SlotRecommendation } from '../components/SlotRecommendation'
 import { EventManager } from '../components/EventManager'
 import { GoogleCalendarIntegration } from '../components/GoogleCalendarIntegration'
+import { CalendarManager } from '../components/CalendarManager'
 import { Task, SlotSuggestion } from '../types/api'
 
 export default function Home() {
@@ -105,7 +106,10 @@ export default function Home() {
         )}
 
         {activeTab === 'integrations' && (
-          <GoogleCalendarIntegration />
+          <>
+            <GoogleCalendarIntegration />
+            <CalendarManager />
+          </>
         )}
       </main>
 

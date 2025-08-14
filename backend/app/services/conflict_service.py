@@ -1,7 +1,8 @@
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone, timedelta
-from typing import List, Dict, Optional
+from typing import List, Dict
 from ..db import models
+from ..repositories.event_repository import EventRepository, SqlAlchemyEventRepository
 from .recommendation_service import compute_slots
 
 class ConflictDetected(Exception):
@@ -10,6 +11,8 @@ class ConflictDetected(Exception):
 
 class ConflictService:
     """Service for detecting and resolving event conflicts"""
+    def __init__(self, repository: EventRepository | None = None):
+        self.repo = repository or SqlAlchemyEventRepository()
     
     def detect_conflicts(self, db: Session, new_event: models.Event) -> List[models.Event]:
         """
@@ -30,18 +33,13 @@ class ConflictService:
             new_start = new_start.replace(tzinfo=timezone.utc)
         if new_end.tzinfo is None:
             new_end = new_end.replace(tzinfo=timezone.utc)
-        
-        # Find overlapping events for the same user (chained filters for testability/mocking)
-        query = db.query(models.Event)
-        query = query.filter(models.Event.user_id == new_event.user_id)
-        query = query.filter(models.Event.start_at < new_end)
-        query = query.filter(models.Event.end_at > new_start)
+
+        # Find overlapping events via repository (selected calendars only)
+        overlapping_events = self.repo.find_overlapping(db, new_event.user_id, new_start, new_end)
         # Don't conflict with self (only if the event has an ID)
         if getattr(new_event, 'id', None):
-            query = query.filter(models.Event.id != new_event.id)
-        
-        overlapping_events = query.all()
-        
+            overlapping_events = [e for e in overlapping_events if e.id != new_event.id]
+
         return overlapping_events
     
     def suggest_resolution(self, db: Session, conflicting_event: models.Event, 
@@ -61,31 +59,22 @@ class ConflictService:
         user_id = conflicting_event.user_id
         now = datetime.now(timezone.utc)
         end_window = now + timedelta(days=14)  # Look ahead 2 weeks
-        
-        existing_events = db.query(models.Event).filter(
-            models.Event.user_id == user_id,
-            models.Event.id != conflicting_event.id,  # Exclude the conflicting event itself
-            models.Event.start_at >= now,
-            models.Event.start_at <= end_window
-        ).all()
-        # Unit tests may provide a Mock for the chained call; treat as no existing events
-        from unittest.mock import Mock
-        if isinstance(existing_events, Mock):
-            existing_events = []
-        
+
+        existing_events = self.repo.find_future_events(db, user_id, now, end_window, exclude_event_id=conflicting_event.id)
+
         # Create availability windows for next 2 weeks (working hours)
         availability = []
         for day in range(14):
             day_start = now.replace(hour=9, minute=0, second=0, microsecond=0) + timedelta(days=day)
             day_end = day_start.replace(hour=17)  # 9 AM to 5 PM
-            
+
             # Skip weekends (rough approximation)
             if day_start.weekday() < 5:  # Monday = 0, Friday = 4
                 availability.append({"start": day_start, "end": day_end})
-        
+
         # Create a task-like object for the recommendation engine
         duration_minutes = int((conflicting_event.end_at - conflicting_event.start_at).total_seconds() / 60)
-        
+
         # Mock a task object with the properties needed by the recommendation engine
         class MockTask:
             def __init__(self, event):
@@ -97,17 +86,17 @@ class ConflictService:
                     self.energy_tag = "deep"
                 elif event.type == "MEETING":
                     self.priority = 2  # Higher priority for meetings
-        
+
         mock_task = MockTask(conflicting_event)
-        
+
         # Get recommendations
         suggestions = compute_slots(
-            mock_task, 
-            availability, 
+            mock_task,
+            availability,
             limit=limit,
-            existing_events=existing_events
+            existing_events=existing_events,
         )
-        
+
         return suggestions
     
     def validate_event_creation(self, db: Session, new_event: models.Event, 

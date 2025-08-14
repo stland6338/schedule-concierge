@@ -37,7 +37,8 @@ export default function OAuthCallback() {
         }
 
         // Exchange code for tokens
-        const redirectUri = `${window.location.origin}/oauth/callback`;
+  const origin = (typeof window !== 'undefined' && (window as any).location?.origin) || 'http://localhost';
+  const redirectUri = `${origin}/oauth/callback`;
         await apiClient.post('/integrations/google/connect', {
           code: code as string,
           redirect_uri: redirectUri
@@ -57,10 +58,9 @@ export default function OAuthCallback() {
       }
     };
 
-    if (router.isReady) {
-      handleCallback();
-    }
-  }, [router.isReady, router.query]);
+  // Defer to next tick so initial state renders
+  setTimeout(() => { handleCallback(); }, 0);
+  }, []);
 
   return (
     <div className="oauth-callback">

@@ -1,5 +1,4 @@
 import pytest
-from unittest.mock import Mock, MagicMock
 from datetime import datetime, timedelta, timezone
 from app.services.conflict_service import ConflictService, ConflictDetected
 from app.db.models import Event, Task
@@ -17,82 +16,68 @@ def make_event(start_hours, duration_hours, event_type="GENERAL", title="Test Ev
         user_id="demo-user"
     )
 
+
+class FakeEventRepository:
+    def __init__(self):
+        self.events_by_user = {}
+
+    def add(self, user_id, event):
+        self.events_by_user.setdefault(user_id, []).append(event)
+
+    def find_overlapping(self, db, user_id: str, start: datetime, end: datetime):
+        events = self.events_by_user.get(user_id, [])
+        return [e for e in events if e.start_at < end and e.end_at > start]
+
+    def find_future_events(self, db, user_id: str, now: datetime, end_window: datetime, exclude_event_id: str | None = None):
+        events = self.events_by_user.get(user_id, [])
+        result = []
+        for e in events:
+            if exclude_event_id and getattr(e, 'id', None) == exclude_event_id:
+                continue
+            if e.start_at >= now and e.start_at <= end_window:
+                result.append(e)
+        return result
+
 def test_detect_conflict_with_overlapping_events():
     """Test that overlapping events are detected as conflicts"""
-    db_mock = Mock()
-    service = ConflictService()
+    repo = FakeEventRepository()
+    service = ConflictService(repository=repo)
     
     # Create a new event that overlaps with existing ones
     new_event = make_event(2, 1, "MEETING", "New Meeting")  # 2-3 PM
     
-    # Mock existing events: one that overlaps
-    existing_events = [
-        make_event(1, 2, "GENERAL", "Existing Event")  # 1-3 PM (overlaps)
-    ]
-    
-    # Mock the full chain: query().filter().filter().filter().filter().all()
-    filter_mock = Mock()
-    filter_mock.all.return_value = existing_events
-    
-    # Chain the filters properly
-    query_mock = Mock()
-    query_mock.filter.return_value.filter.return_value.filter.return_value.filter.return_value = filter_mock
-    
-    db_mock.query.return_value = query_mock
-    
-    conflicts = service.detect_conflicts(db_mock, new_event)
+    # Existing event overlaps
+    repo.add("demo-user", make_event(1, 2, "GENERAL", "Existing Event"))
+    conflicts = service.detect_conflicts(None, new_event)
     
     assert len(conflicts) == 1
     assert conflicts[0].id == "event-1"
 
 def test_detect_no_conflict_with_non_overlapping_events():
     """Test that non-overlapping events don't create conflicts"""
-    db_mock = Mock()
-    service = ConflictService()
+    repo = FakeEventRepository()
+    service = ConflictService(repository=repo)
     
     # Create a new event
     new_event = make_event(4, 1, "MEETING", "New Meeting")  # 4-5 PM
     
-    # Mock existing events: none that overlap (should return empty due to SQL filter)
-    existing_events = []  # No overlapping events found by database query
-    
-    # Mock the full chain
-    filter_mock = Mock()
-    filter_mock.all.return_value = existing_events
-    
-    query_mock = Mock()
-    query_mock.filter.return_value.filter.return_value.filter.return_value.filter.return_value = filter_mock
-    
-    db_mock.query.return_value = query_mock
-    
-    conflicts = service.detect_conflicts(db_mock, new_event)
+    # No existing events
+    conflicts = service.detect_conflicts(None, new_event)
     
     assert len(conflicts) == 0
 
 def test_detect_multiple_conflicts():
     """Test detection of multiple overlapping events"""
-    db_mock = Mock()
-    service = ConflictService()
+    repo = FakeEventRepository()
+    service = ConflictService(repository=repo)
     
     # New event that overlaps with multiple existing events
     new_event = make_event(2, 3, "MEETING", "Long Meeting")  # 2-5 PM
     
-    # Multiple overlapping events (only overlapping ones returned by DB)
-    existing_events = [
-        make_event(1, 2, "GENERAL", "Event 1"),    # 1-3 PM (overlaps)
-        make_event(3, 2, "FOCUS", "Event 2"),      # 3-5 PM (overlaps)
-    ]
-    
-    # Mock the chain
-    filter_mock = Mock()
-    filter_mock.all.return_value = existing_events
-    
-    query_mock = Mock()
-    query_mock.filter.return_value.filter.return_value.filter.return_value.filter.return_value = filter_mock
-    
-    db_mock.query.return_value = query_mock
-    
-    conflicts = service.detect_conflicts(db_mock, new_event)
+    # Multiple overlapping events
+    repo.add("demo-user", make_event(1, 2, "GENERAL", "Event 1"))
+    repo.add("demo-user", make_event(3, 2, "FOCUS", "Event 2"))
+    conflicts = service.detect_conflicts(None, new_event)
     
     assert len(conflicts) == 2
     conflict_ids = [c.id for c in conflicts]
@@ -101,8 +86,8 @@ def test_detect_multiple_conflicts():
 
 def test_suggest_conflict_resolution():
     """Test conflict resolution suggestions"""
-    db_mock = Mock()
-    service = ConflictService()
+    repo = FakeEventRepository()
+    service = ConflictService(repository=repo)
     
     # Conflicting event
     conflicting_event = make_event(2, 1, "MEETING", "Meeting")  # 2-3 PM
@@ -132,7 +117,7 @@ def test_suggest_conflict_resolution():
     app.services.recommendation_service.compute_slots = mock_compute_slots
     
     try:
-        suggestions = service.suggest_resolution(db_mock, conflicting_event)
+        suggestions = service.suggest_resolution(None, conflicting_event)
         
         assert len(suggestions) > 0
         assert all("startAt" in s for s in suggestions)
@@ -149,89 +134,55 @@ def test_suggest_conflict_resolution():
 
 def test_focus_time_protection():
     """Test that FOCUS events are strongly protected from conflicts"""
-    db_mock = Mock()
-    service = ConflictService()
+    repo = FakeEventRepository()
+    service = ConflictService(repository=repo)
     
     # Try to create meeting during focus time
     new_event = make_event(2, 1, "MEETING", "Team Meeting")  # 2-3 PM
     
     # Existing focus block
-    existing_events = [
-        make_event(1.5, 2, "FOCUS", "Deep Work")  # 1:30-3:30 PM (overlaps)
-    ]
-    
-    # Mock the chain
-    filter_mock = Mock()
-    filter_mock.all.return_value = existing_events
-    
-    query_mock = Mock()
-    query_mock.filter.return_value.filter.return_value.filter.return_value.filter.return_value = filter_mock
-    
-    db_mock.query.return_value = query_mock
+    repo.add("demo-user", make_event(1.5, 2, "FOCUS", "Deep Work"))
     
     # Should detect conflict
-    conflicts = service.detect_conflicts(db_mock, new_event)
+    conflicts = service.detect_conflicts(None, new_event)
     assert len(conflicts) == 1
     
     # Should strongly recommend rescheduling (not allowed to override FOCUS)
     with pytest.raises(ConflictDetected) as exc_info:
-        service.validate_event_creation(db_mock, new_event, allow_focus_override=False)
+        service.validate_event_creation(None, new_event, allow_focus_override=False)
     
     assert "FOCUS time is protected" in str(exc_info.value)
 
 def test_allow_focus_override():
     """Test that FOCUS conflicts can be overridden when explicitly allowed"""
-    db_mock = Mock()
-    service = ConflictService()
+    repo = FakeEventRepository()
+    service = ConflictService(repository=repo)
     
     # Try to create meeting during focus time
     new_event = make_event(2, 1, "MEETING", "Urgent Meeting")
     
     # Existing focus block
-    existing_events = [
-        make_event(1.5, 2, "FOCUS", "Deep Work")
-    ]
-    
-    # Mock the chain
-    filter_mock = Mock()
-    filter_mock.all.return_value = existing_events
-    
-    query_mock = Mock()
-    query_mock.filter.return_value.filter.return_value.filter.return_value.filter.return_value = filter_mock
-    
-    db_mock.query.return_value = query_mock
+    repo.add("demo-user", make_event(1.5, 2, "FOCUS", "Deep Work"))
     
     # Should be allowed with explicit override
     try:
-        service.validate_event_creation(db_mock, new_event, allow_focus_override=True)
+        service.validate_event_creation(None, new_event, allow_focus_override=True)
         # Should not raise exception
     except ConflictDetected:
         pytest.fail("Should allow FOCUS override when explicitly enabled")
 
 def test_conflict_severity_scoring():
     """Test that conflicts are scored by severity"""
-    db_mock = Mock()
-    service = ConflictService()
+    repo = FakeEventRepository()
+    service = ConflictService(repository=repo)
     
     new_event = make_event(2, 2, "MEETING", "Long Meeting")  # 2-4 PM
     
-    # Different types of conflicting events (only overlapping ones returned by DB)
-    existing_events = [
-        make_event(1, 2, "GENERAL", "Regular Event"),    # 1-3 PM
-        make_event(3, 2, "FOCUS", "Deep Work"),          # 3-5 PM  
-        make_event(1.5, 1, "MEETING", "Important Meeting")  # 1:30-2:30 PM
-    ]
-    
-    # Mock the chain
-    filter_mock = Mock()
-    filter_mock.all.return_value = existing_events
-    
-    query_mock = Mock()
-    query_mock.filter.return_value.filter.return_value.filter.return_value.filter.return_value = filter_mock
-    
-    db_mock.query.return_value = query_mock
-    
-    conflicts = service.detect_conflicts(db_mock, new_event)
+    # Different types of conflicting events
+    repo.add("demo-user", make_event(1, 2, "GENERAL", "Regular Event"))
+    repo.add("demo-user", make_event(3, 2, "FOCUS", "Deep Work"))
+    repo.add("demo-user", make_event(1.5, 1, "MEETING", "Important Meeting"))
+    conflicts = service.detect_conflicts(None, new_event)
     
     # Should detect all 3 conflicts
     assert len(conflicts) == 3

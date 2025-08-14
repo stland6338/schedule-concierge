@@ -47,6 +47,23 @@ def _ensure_tables():
                     cols = {r[1] for r in res}
                     if 'hashed_password' not in cols:
                         conn.exec_driver_sql("ALTER TABLE users ADD COLUMN hashed_password VARCHAR")
+                    # calendars lightweight adds
+                    res_c = conn.exec_driver_sql("PRAGMA table_info(calendars)").fetchall()
+                    cal_cols = {r[1] for r in res_c}
+                    for col, ddl in [
+                        ("time_zone", "ALTER TABLE calendars ADD COLUMN time_zone VARCHAR"),
+                        ("access_role", "ALTER TABLE calendars ADD COLUMN access_role VARCHAR"),
+                        ("color", "ALTER TABLE calendars ADD COLUMN color VARCHAR"),
+                        ("is_primary", "ALTER TABLE calendars ADD COLUMN is_primary INTEGER DEFAULT 0"),
+                        ("is_default", "ALTER TABLE calendars ADD COLUMN is_default INTEGER DEFAULT 0"),
+                        ("selected", "ALTER TABLE calendars ADD COLUMN selected INTEGER DEFAULT 1"),
+                        ("updated_at", "ALTER TABLE calendars ADD COLUMN updated_at TIMESTAMP"),
+                    ]:
+                        if col not in cal_cols:
+                            try:
+                                conn.exec_driver_sql(ddl)
+                            except Exception:
+                                pass
             except Exception:
                 pass
             _tables_created = True

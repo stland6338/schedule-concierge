@@ -1,4 +1,5 @@
 from app.services.recommendation_service import compute_slots, score_slot
+from prometheus_client import generate_latest
 from types import SimpleNamespace
 from datetime import datetime, timedelta
 
@@ -21,3 +22,12 @@ def test_score_slot_due_urgency_increases_score():
     s1 = score_slot(task1, now, now + timedelta(minutes=30))
     s2 = score_slot(task2, now, now + timedelta(minutes=30))
     assert s1 > s2
+
+
+def test_slot_score_duration_metric_exposed():
+    task = make_task()
+    now = datetime.utcnow()
+    windows = [{"start": now, "end": now + timedelta(hours=1)}]
+    compute_slots(task, windows, limit=2)
+    metrics = generate_latest().decode('utf-8')
+    assert 'schedule_concierge_slot_score_duration_seconds' in metrics

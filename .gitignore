@@ -140,7 +140,7 @@ cython_debug/
 # Serena
 .serena/
 
-# Claude
+# AI assistants
 .claude/
 
 # DB
